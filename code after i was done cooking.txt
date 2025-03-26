@@ -1,0 +1,1485 @@
+import java.sql.*;
+import java.time.LocalDate;
+import java.util.*;
+import javafx.application.Application;
+import javafx.geometry.*;
+import javafx.scene.*;
+import javafx.scene.control.*;
+import javafx.scene.layout.*;
+import javafx.stage.Stage;
+import javafx.scene.image.*;
+import javafx.scene.media.*;
+import javafx.embed.swing.SwingFXUtils;
+import javax.imageio.ImageIO;
+import java.io.*;
+import javafx.stage.FileChooser;
+import javafx.util.Duration;
+import javafx.scene.text.Text;
+import javafx.scene.text.Font;
+import javafx.animation.*;
+import javafx.scene.paint.Color;
+
+// Enum for item status
+enum ItemStatus {
+    LOST, FOUND, CLAIMED, RETURNED
+}
+
+// Enum for notification type
+enum NotificationType {
+    MESSAGE, CLAIM, RESPONSE
+}
+
+// Interface for repository pattern
+interface ItemRepository {
+    boolean addItem(Item item) throws DatabaseException;
+    List<Item> searchItems(String keyword) throws DatabaseException;
+    List<Item> getItemsByUser(User user) throws DatabaseException;
+    boolean addMedia(int itemId, String mediaPath, boolean isVideo) throws DatabaseException;
+    List<String> getMediaForItem(int itemId) throws DatabaseException;
+    boolean addMessage(int itemId, int senderId, String message) throws DatabaseException;
+    List<Message> getMessagesForItem(int itemId) throws DatabaseException;
+    boolean addNotification(int userId, int itemId, String message, NotificationType type) throws DatabaseException;
+    List<Notification> getNotificationsForUser(int userId) throws DatabaseException;
+    boolean markNotificationAsRead(int notificationId) throws DatabaseException;
+    User getUserById(int id) throws DatabaseException;
+}
+
+// Custom exception for database operations
+class DatabaseException extends Exception {
+    public DatabaseException(String message) {
+        super(message);
+    }
+    
+    public DatabaseException(String message, Throwable cause) {
+        super(message, cause);
+    }
+}
+
+// User class
+class User {
+    private int id;
+    private String username;
+    private String password;
+    private String email;
+    private String phone;
+    private String role;
+    
+    public User(int id, String username, String password, String email, String phone, String role) {
+        this.id = id;
+        this.username = username;
+        this.password = password;
+        this.email = email;
+        this.phone = phone;
+        this.role = role;
+    }
+    
+    // Getters and setters
+    public int getId() { return id; }
+    public String getUsername() { return username; }
+    public String getEmail() { return email; }
+    public String getPhone() { return phone; }
+    public String getRole() { return role; }
+    
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj) return true;
+        if (obj == null || getClass() != obj.getClass()) return false;
+        User user = (User) obj;
+        return id == user.id;
+    }
+    
+    @Override
+    public int hashCode() {
+        return Objects.hash(id);
+    }
+}
+
+// Message class
+class Message {
+    private int id;
+    private int itemId;
+    private User sender;
+    private String content;
+    private LocalDate timestamp;
+    
+    public Message(int id, int itemId, User sender, String content, LocalDate timestamp) {
+        this.id = id;
+        this.itemId = itemId;
+        this.sender = sender;
+        this.content = content;
+        this.timestamp = timestamp;
+    }
+    
+    public int getId() { return id; }
+    public int getItemId() { return itemId; }
+    public User getSender() { return sender; }
+    public String getContent() { return content; }
+    public LocalDate getTimestamp() { return timestamp; }
+    
+    @Override
+    public String toString() {
+        return String.format("[%s] %s: %s", timestamp, sender.getUsername(), content);
+    }
+}
+
+// Notification class
+class Notification {
+    private int id;
+    private int userId;
+    private int itemId;
+    private String message;
+    private NotificationType type;
+    private boolean read;
+    private LocalDate timestamp;
+    
+    public Notification(int id, int userId, int itemId, String message, NotificationType type, boolean read, LocalDate timestamp) {
+        this.id = id;
+        this.userId = userId;
+        this.itemId = itemId;
+        this.message = message;
+        this.type = type;
+        this.read = read;
+        this.timestamp = timestamp;
+    }
+    
+    public int getId() { return id; }
+    public int getUserId() { return userId; }
+    public int getItemId() { return itemId; }
+    public String getMessage() { return message; }
+    public NotificationType getType() { return type; }
+    public boolean isRead() { return read; }
+    public LocalDate getTimestamp() { return timestamp; }
+    
+    @Override
+    public String toString() {
+        return String.format("[%s] %s: %s", timestamp, type.toString(), message);
+    }
+}
+
+// Abstract Item class
+abstract class Item {
+    private int id;
+    private String name;
+    private String description;
+    private String location;
+    private LocalDate date;
+    private User reporter;
+    private ItemStatus status;
+    
+    public Item(int id, String name, String description, String location, 
+               LocalDate date, User reporter, ItemStatus status) {
+        this.id = id;
+        this.name = name;
+        this.description = description;
+        this.location = location;
+        this.date = date;
+        this.reporter = reporter;
+        this.status = status;
+    }
+    
+    // Getters
+    public int getId() { return id; }
+    public String getName() { return name; }
+    public String getDescription() { return description; }
+    public String getLocation() { return location; }
+    public LocalDate getDate() { return date; }
+    public User getReporter() { return reporter; }
+    public ItemStatus getStatus() { return status; }
+    
+    // Abstract method
+    public abstract String getType();
+    
+    @Override
+    public String toString() {
+        return String.format("%s: %s\nDescription: %s\nLocation: %s\nDate: %s\nStatus: %s\nReported by: %s (Phone: %s)",
+                getType(), name, description, location, date, status, reporter.getUsername(), reporter.getPhone());
+    }
+}
+
+// LostItem class
+class LostItem extends Item {
+    private double reward;
+    
+    public LostItem(int id, String name, String description, String location, 
+                   LocalDate date, User reporter, ItemStatus status, double reward) {
+        super(id, name, description, location, date, reporter, status);
+        this.reward = reward;
+    }
+    
+    public double getReward() { return reward; }
+    
+    @Override
+    public String getType() {
+        return "LOST ITEM";
+    }
+    
+    @Override
+    public String toString() {
+        return super.toString() + String.format("\nReward: $%.2f", reward);
+    }
+}
+
+// FoundItem class
+class FoundItem extends Item {
+    private String storageLocation;
+    
+    public FoundItem(int id, String name, String description, String location, 
+                    LocalDate date, User reporter, ItemStatus status, String storageLocation) {
+        super(id, name, description, location, date, reporter, status);
+        this.storageLocation = storageLocation;
+    }
+    
+    public String getStorageLocation() { return storageLocation; }
+    
+    @Override
+    public String getType() {
+        return "FOUND ITEM";
+    }
+    
+    @Override
+    public String toString() {
+        return super.toString() + String.format("\nStorage Location: %s", storageLocation);
+    }
+}
+
+// Database implementation
+class Database implements ItemRepository {
+    private Connection connection;
+    private static final String DB_URL = "jdbc:mysql://localhost:3306/campus_lost_found";
+    private static final String DB_USER = "root";
+    private static final String DB_PASS = "password";
+    
+    public Database() throws DatabaseException {
+        connect();
+    }
+    
+    private void connect() throws DatabaseException {
+        try {
+            Class.forName("com.mysql.cj.jdbc.Driver");
+            connection = DriverManager.getConnection(DB_URL, DB_USER, DB_PASS);
+        } catch (ClassNotFoundException | SQLException e) {
+            throw new DatabaseException("Failed to connect to database", e);
+        }
+    }
+    
+    public void disconnect() {
+        try {
+            if (connection != null && !connection.isClosed()) {
+                connection.close();
+            }
+        } catch (SQLException e) {
+            System.err.println("Error closing database connection: " + e.getMessage());
+        }
+    }
+    
+    @Override
+    public boolean addItem(Item item) throws DatabaseException {
+        String sql;
+        if (item instanceof LostItem) {
+            sql = "INSERT INTO lost_items (name, description, location, date, reporter_id, status, reward) " +
+                  "VALUES (?, ?, ?, ?, ?, ?, ?)";
+        } else if (item instanceof FoundItem) {
+            sql = "INSERT INTO found_items (name, description, location, date, reporter_id, status, storage_location) " +
+                  "VALUES (?, ?, ?, ?, ?, ?, ?)";
+        } else {
+            return false;
+        }
+        
+        try (PreparedStatement stmt = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
+            stmt.setString(1, item.getName());
+            stmt.setString(2, item.getDescription());
+            stmt.setString(3, item.getLocation());
+            stmt.setDate(4, Date.valueOf(item.getDate()));
+            stmt.setInt(5, item.getReporter().getId());
+            stmt.setString(6, item.getStatus().toString());
+            
+            if (item instanceof LostItem) {
+                stmt.setDouble(7, ((LostItem) item).getReward());
+            } else {
+                stmt.setString(7, ((FoundItem) item).getStorageLocation());
+            }
+            
+            int affectedRows = stmt.executeUpdate();
+            if (affectedRows == 0) {
+                return false;
+            }
+            
+            try (ResultSet generatedKeys = stmt.getGeneratedKeys()) {
+                if (generatedKeys.next()) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (SQLException e) {
+            throw new DatabaseException("Failed to add item", e);
+        }
+    }
+    
+    @Override
+    public List<Item> searchItems(String keyword) throws DatabaseException {
+        List<Item> results = new ArrayList<>();
+        String sql = "(SELECT id, name, description, location, date, reporter_id, status, reward, NULL as storage_location, 'LOST' as item_type " +
+                     "FROM lost_items WHERE name LIKE ? OR description LIKE ? OR location LIKE ?) " +
+                     "UNION " +
+                     "(SELECT id, name, description, location, date, reporter_id, status, NULL as reward, storage_location, 'FOUND' as item_type " +
+                     "FROM found_items WHERE name LIKE ? OR description LIKE ? OR location LIKE ?)";
+        
+        try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+            String searchPattern = "%" + keyword + "%";
+            for (int i = 1; i <= 6; i++) {
+                stmt.setString(i, searchPattern);
+            }
+            
+            ResultSet rs = stmt.executeQuery();
+            while (rs.next()) {
+                User reporter = getUserById(rs.getInt("reporter_id"));
+                ItemStatus status = ItemStatus.valueOf(rs.getString("status"));
+                
+                if ("LOST".equals(rs.getString("item_type"))) {
+                    results.add(new LostItem(
+                        rs.getInt("id"),
+                        rs.getString("name"),
+                        rs.getString("description"),
+                        rs.getString("location"),
+                        rs.getDate("date").toLocalDate(),
+                        reporter,
+                        status,
+                        rs.getDouble("reward")
+                    ));
+                } else {
+                    results.add(new FoundItem(
+                        rs.getInt("id"),
+                        rs.getString("name"),
+                        rs.getString("description"),
+                        rs.getString("location"),
+                        rs.getDate("date").toLocalDate(),
+                        reporter,
+                        status,
+                        rs.getString("storage_location")
+                    ));
+                }
+            }
+        } catch (SQLException e) {
+            throw new DatabaseException("Failed to search items", e);
+        }
+        return results;
+    }
+    
+    @Override
+    public List<Item> getItemsByUser(User user) throws DatabaseException {
+        List<Item> results = new ArrayList<>();
+        String sql = "(SELECT id, name, description, location, date, status, reward, NULL as storage_location, 'LOST' as item_type " +
+                     "FROM lost_items WHERE reporter_id = ?) " +
+                     "UNION " +
+                     "(SELECT id, name, description, location, date, status, NULL as reward, storage_location, 'FOUND' as item_type " +
+                     "FROM found_items WHERE reporter_id = ?)";
+        
+        try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+            stmt.setInt(1, user.getId());
+            stmt.setInt(2, user.getId());
+            
+            ResultSet rs = stmt.executeQuery();
+            while (rs.next()) {
+                ItemStatus status = ItemStatus.valueOf(rs.getString("status"));
+                
+                if ("LOST".equals(rs.getString("item_type"))) {
+                    results.add(new LostItem(
+                        rs.getInt("id"),
+                        rs.getString("name"),
+                        rs.getString("description"),
+                        rs.getString("location"),
+                        rs.getDate("date").toLocalDate(),
+                        user,
+                        status,
+                        rs.getDouble("reward")
+                    ));
+                } else {
+                    results.add(new FoundItem(
+                        rs.getInt("id"),
+                        rs.getString("name"),
+                        rs.getString("description"),
+                        rs.getString("location"),
+                        rs.getDate("date").toLocalDate(),
+                        user,
+                        status,
+                        rs.getString("storage_location")
+                    ));
+                }
+            }
+        } catch (SQLException e) {
+            throw new DatabaseException("Failed to get user items", e);
+        }
+        return results;
+    }
+    
+    @Override
+    public boolean addMedia(int itemId, String mediaPath, boolean isVideo) throws DatabaseException {
+        String sql = "INSERT INTO item_media (item_id, media_path, is_video) VALUES (?, ?, ?)";
+        
+        try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+            stmt.setInt(1, itemId);
+            stmt.setString(2, mediaPath);
+            stmt.setBoolean(3, isVideo);
+            
+            return stmt.executeUpdate() > 0;
+        } catch (SQLException e) {
+            throw new DatabaseException("Failed to add media", e);
+        }
+    }
+    
+    @Override
+    public List<String> getMediaForItem(int itemId) throws DatabaseException {
+        List<String> media = new ArrayList<>();
+        String sql = "SELECT media_path FROM item_media WHERE item_id = ?";
+        
+        try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+            stmt.setInt(1, itemId);
+            
+            ResultSet rs = stmt.executeQuery();
+            while (rs.next()) {
+                media.add(rs.getString("media_path"));
+            }
+        } catch (SQLException e) {
+            throw new DatabaseException("Failed to get media for item", e);
+        }
+        return media;
+    }
+    
+    @Override
+    public boolean addMessage(int itemId, int senderId, String message) throws DatabaseException {
+        String sql = "INSERT INTO messages (item_id, sender_id, content, timestamp) VALUES (?, ?, ?, ?)";
+        
+        try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+            stmt.setInt(1, itemId);
+            stmt.setInt(2, senderId);
+            stmt.setString(3, message);
+            stmt.setDate(4, Date.valueOf(LocalDate.now()));
+            
+            return stmt.executeUpdate() > 0;
+        } catch (SQLException e) {
+            throw new DatabaseException("Failed to add message", e);
+        }
+    }
+    
+    @Override
+    public List<Message> getMessagesForItem(int itemId) throws DatabaseException {
+        List<Message> messages = new ArrayList<>();
+        String sql = "SELECT id, sender_id, content, timestamp FROM messages WHERE item_id = ? ORDER BY timestamp";
+        
+        try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+            stmt.setInt(1, itemId);
+            
+            ResultSet rs = stmt.executeQuery();
+            while (rs.next()) {
+                User sender = getUserById(rs.getInt("sender_id"));
+                messages.add(new Message(
+                    rs.getInt("id"),
+                    itemId,
+                    sender,
+                    rs.getString("content"),
+                    rs.getDate("timestamp").toLocalDate()
+                ));
+            }
+        } catch (SQLException e) {
+            throw new DatabaseException("Failed to get messages for item", e);
+        }
+        return messages;
+    }
+    
+    @Override
+    public boolean addNotification(int userId, int itemId, String message, NotificationType type) throws DatabaseException {
+        String sql = "INSERT INTO notifications (user_id, item_id, message, type, read_status, timestamp) " +
+                     "VALUES (?, ?, ?, ?, ?, ?)";
+        
+        try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+            stmt.setInt(1, userId);
+            stmt.setInt(2, itemId);
+            stmt.setString(3, message);
+            stmt.setString(4, type.toString());
+            stmt.setBoolean(5, false);
+            stmt.setDate(6, Date.valueOf(LocalDate.now()));
+            
+            return stmt.executeUpdate() > 0;
+        } catch (SQLException e) {
+            throw new DatabaseException("Failed to add notification", e);
+        }
+    }
+    
+    @Override
+    public List<Notification> getNotificationsForUser(int userId) throws DatabaseException {
+        List<Notification> notifications = new ArrayList<>();
+        String sql = "SELECT id, item_id, message, type, read_status, timestamp FROM notifications " +
+                     "WHERE user_id = ? ORDER BY timestamp DESC";
+        
+        try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+            stmt.setInt(1, userId);
+            
+            ResultSet rs = stmt.executeQuery();
+            while (rs.next()) {
+                notifications.add(new Notification(
+                    rs.getInt("id"),
+                    userId,
+                    rs.getInt("item_id"),
+                    rs.getString("message"),
+                    NotificationType.valueOf(rs.getString("type")),
+                    rs.getBoolean("read_status"),
+                    rs.getDate("timestamp").toLocalDate()
+                ));
+            }
+        } catch (SQLException e) {
+            throw new DatabaseException("Failed to get notifications", e);
+        }
+        return notifications;
+    }
+    
+    @Override
+    public boolean markNotificationAsRead(int notificationId) throws DatabaseException {
+        String sql = "UPDATE notifications SET read_status = true WHERE id = ?";
+        
+        try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+            stmt.setInt(1, notificationId);
+            return stmt.executeUpdate() > 0;
+        } catch (SQLException e) {
+            throw new DatabaseException("Failed to mark notification as read", e);
+        }
+    }
+    
+    public User authenticateUser(String username, String password) throws DatabaseException {
+        String sql = "SELECT id, username, email, phone, role FROM users WHERE username = ? AND password = ?";
+        
+        try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+            stmt.setString(1, username);
+            stmt.setString(2, password);
+            
+            ResultSet rs = stmt.executeQuery();
+            if (rs.next()) {
+                return new User(
+                    rs.getInt("id"),
+                    rs.getString("username"),
+                    password, // Note: In real app, don't store plain text passwords
+                    rs.getString("email"),
+                    rs.getString("phone"),
+                    rs.getString("role")
+                );
+            }
+            return null;
+        } catch (SQLException e) {
+            throw new DatabaseException("Failed to authenticate user", e);
+        }
+    }
+    
+    @Override
+    public User getUserById(int id) throws DatabaseException {
+        String sql = "SELECT username, email, phone, role FROM users WHERE id = ?";
+        
+        try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+            stmt.setInt(1, id);
+            
+            ResultSet rs = stmt.executeQuery();
+            if (rs.next()) {
+                return new User(
+                    id,
+                    rs.getString("username"),
+                    "", // Password not needed here
+                    rs.getString("email"),
+                    rs.getString("phone"),
+                    rs.getString("role")
+                );
+            }
+            return null;
+        } catch (SQLException e) {
+            throw new DatabaseException("Failed to get user by ID", e);
+        }
+    }
+}
+
+// Main application with JavaFX GUI
+public class CampusLostAndFoundApp extends Application {
+    private Database database;
+    private User currentUser;
+    private Stage primaryStage;
+    private BorderPane root;
+    private Timeline notificationChecker;
+    
+    public static void main(String[] args) {
+        launch(args);
+    }
+    
+    @Override
+    public void start(Stage primaryStage) {
+        this.primaryStage = primaryStage;
+        try {
+            database = new Database();
+            
+            // Create login screen first
+            showLoginScreen();
+        } catch (DatabaseException e) {
+            showAlert("Database Error", "Failed to connect to database: " + e.getMessage());
+            System.exit(1);
+        }
+    }
+    
+    private void showLoginScreen() {
+        primaryStage.setTitle("Campus Lost & Found - Login");
+        
+        GridPane grid = new GridPane();
+        grid.setAlignment(Pos.CENTER);
+        grid.setHgap(10);
+        grid.setVgap(10);
+        grid.setPadding(new Insets(25, 25, 25, 25));
+        
+        Label titleLabel = new Label("Campus Lost & Found");
+        titleLabel.setStyle("-fx-font-size: 24; -fx-font-weight: bold;");
+        grid.add(titleLabel, 0, 0, 2, 1);
+        
+        Label usernameLabel = new Label("Username:");
+        grid.add(usernameLabel, 0, 1);
+        
+        TextField usernameField = new TextField();
+        grid.add(usernameField, 1, 1);
+        
+        Label passwordLabel = new Label("Password:");
+        grid.add(passwordLabel, 0, 2);
+        
+        PasswordField passwordField = new PasswordField();
+        grid.add(passwordField, 1, 2);
+        
+        Button loginButton = new Button("Login");
+        Button registerButton = new Button("Register");
+        
+        HBox buttonBox = new HBox(10);
+        buttonBox.setAlignment(Pos.BOTTOM_RIGHT);
+        buttonBox.getChildren().addAll(registerButton, loginButton);
+        grid.add(buttonBox, 1, 4);
+        
+        loginButton.setOnAction(e -> {
+            try {
+                currentUser = database.authenticateUser(
+                    usernameField.getText(),
+                    passwordField.getText()
+                );
+                
+                if (currentUser != null) {
+                    startNotificationChecker();
+                    showMainScreen();
+                } else {
+                    showAlert("Login Failed", "Invalid username or password");
+                }
+            } catch (DatabaseException ex) {
+                showAlert("Database Error", "Failed to authenticate: " + ex.getMessage());
+            }
+        });
+        
+        registerButton.setOnAction(e -> showRegistrationScreen());
+        
+        Scene scene = new Scene(grid, 400, 300);
+        primaryStage.setScene(scene);
+        primaryStage.show();
+    }
+    
+    private void showRegistrationScreen() {
+        primaryStage.setTitle("Campus Lost & Found - Register");
+        
+        GridPane grid = new GridPane();
+        grid.setAlignment(Pos.CENTER);
+        grid.setHgap(10);
+        grid.setVgap(10);
+        grid.setPadding(new Insets(25, 25, 25, 25));
+        
+        Label titleLabel = new Label("Register New Account");
+        titleLabel.setStyle("-fx-font-size: 20; -fx-font-weight: bold;");
+        grid.add(titleLabel, 0, 0, 2, 1);
+        
+        // Add registration form fields
+        Label usernameLabel = new Label("Username:");
+        grid.add(usernameLabel, 0, 1);
+        
+        TextField usernameField = new TextField();
+        grid.add(usernameField, 1, 1);
+        
+        Label passwordLabel = new Label("Password:");
+        grid.add(passwordLabel, 0, 2);
+        
+        PasswordField passwordField = new PasswordField();
+        grid.add(passwordField, 1, 2);
+        
+        Label emailLabel = new Label("Email:");
+        grid.add(emailLabel, 0, 3);
+        
+        TextField emailField = new TextField();
+        grid.add(emailField, 1, 3);
+        
+        Label phoneLabel = new Label("Phone:");
+        grid.add(phoneLabel, 0, 4);
+        
+        TextField phoneField = new TextField();
+        grid.add(phoneField, 1, 4);
+        
+        Label roleLabel = new Label("Role:");
+        grid.add(roleLabel, 0, 5);
+        
+        ComboBox<String> roleCombo = new ComboBox<>();
+        roleCombo.getItems().addAll("Student", "Staff", "Administrator");
+        roleCombo.setValue("Student");
+        grid.add(roleCombo, 1, 5);
+        
+        Button registerButton = new Button("Complete Registration");
+        Button backButton = new Button("Back to Login");
+        
+        HBox buttonBox = new HBox(10);
+        buttonBox.setAlignment(Pos.BOTTOM_RIGHT);
+        buttonBox.getChildren().addAll(backButton, registerButton);
+        grid.add(buttonBox, 1, 6);
+        
+        registerButton.setOnAction(e -> {
+            // In a real app, you would validate inputs and add to database
+            showAlert("Registration", "Registration would be implemented here");
+        });
+        
+        backButton.setOnAction(e -> showLoginScreen());
+        
+        Scene scene = new Scene(grid, 400, 400);
+        primaryStage.setScene(scene);
+    }
+    
+    private void showMainScreen() {
+        primaryStage.setTitle("Campus Lost & Found - Welcome " + currentUser.getUsername());
+        
+        root = new BorderPane();
+        
+        TabPane tabPane = new TabPane();
+        
+        // Create tabs
+        Tab reportLostTab = new Tab("Report Lost Item");
+        Tab reportFoundTab = new Tab("Report Found Item");
+        Tab searchTab = new Tab("Search Items");
+        Tab myItemsTab = new Tab("My Reported Items");
+        Tab messagesTab = new Tab("Messages");
+        Tab notificationsTab = new Tab("Notifications");
+        
+        // Set tab content
+        reportLostTab.setContent(createLostItemForm());
+        reportFoundTab.setContent(createFoundItemForm());
+        searchTab.setContent(createSearchPanel());
+        myItemsTab.setContent(createMyItemsPanel());
+        messagesTab.setContent(createMessagesPanel());
+        notificationsTab.setContent(createNotificationsPanel());
+        
+        // Add tabs to tab pane
+        tabPane.getTabs().addAll(reportLostTab, reportFoundTab, searchTab, myItemsTab, messagesTab, notificationsTab);
+        
+        // Add logout button
+        Button logoutButton = new Button("Logout");
+        logoutButton.setOnAction(e -> {
+            stopNotificationChecker();
+            database.disconnect();
+            showLoginScreen();
+        });
+        
+        // Notification bell with badge
+        StackPane notificationBell = createNotificationBell();
+        
+        HBox topBar = new HBox(10);
+        topBar.setAlignment(Pos.CENTER_RIGHT);
+        topBar.setPadding(new Insets(10));
+        topBar.getChildren().addAll(notificationBell, logoutButton);
+        
+        root.setTop(topBar);
+        root.setCenter(tabPane);
+        
+        Scene scene = new Scene(root, 900, 700);
+        primaryStage.setScene(scene);
+    }
+    
+    private StackPane createNotificationBell() {
+        ImageView bellIcon = new ImageView(new Image("file:bell.png")); // You need a bell icon image
+        bellIcon.setFitHeight(24);
+        bellIcon.setFitWidth(24);
+        
+        Text badge = new Text();
+        badge.setFont(Font.font(10));
+        badge.setFill(Color.WHITE);
+        
+        Circle badgeCircle = new Circle(10, Color.RED);
+        badgeCircle.setStroke(Color.WHITE);
+        badgeCircle.setStrokeWidth(1);
+        
+        try {
+            List<Notification> unread = database.getNotificationsForUser(currentUser.getId());
+            long unreadCount = unread.stream().filter(n -> !n.isRead()).count();
+            if (unreadCount > 0) {
+                badge.setText(String.valueOf(unreadCount));
+            } else {
+                badgeCircle.setVisible(false);
+                badge.setVisible(false);
+            }
+        } catch (DatabaseException e) {
+            System.err.println("Failed to load notifications: " + e.getMessage());
+        }
+        
+        StackPane badgePane = new StackPane(badgeCircle, badge);
+        badgePane.setAlignment(Pos.TOP_RIGHT);
+        badgePane.setTranslateX(8);
+        badgePane.setTranslateY(-8);
+        
+        StackPane notificationButton = new StackPane(bellIcon, badgePane);
+        notificationButton.setOnMouseClicked(e -> {
+            ((TabPane)root.getCenter()).getSelectionModel().select(4); // Select notifications tab
+        });
+        
+        return notificationButton;
+    }
+    
+    private void startNotificationChecker() {
+        notificationChecker = new Timeline(
+            new KeyFrame(Duration.seconds(30), e -> checkForNewNotifications())
+        );
+        notificationChecker.setCycleCount(Timeline.INDEFINITE);
+        notificationChecker.play();
+    }
+    
+    private void stopNotificationChecker() {
+        if (notificationChecker != null) {
+            notificationChecker.stop();
+        }
+    }
+    
+    private void checkForNewNotifications() {
+        try {
+            List<Notification> notifications = database.getNotificationsForUser(currentUser.getId());
+            long unreadCount = notifications.stream().filter(n -> !n.isRead()).count();
+            
+            if (unreadCount > 0) {
+                showTrayNotification("You have " + unreadCount + " new notifications");
+            }
+        } catch (DatabaseException e) {
+            System.err.println("Failed to check notifications: " + e.getMessage());
+        }
+    }
+    
+    private void showTrayNotification(String message) {
+        // In a real app, you would implement system tray notifications
+        // For now, we'll just show an alert
+        showAlert("New Notification", message);
+    }
+    
+    private VBox createLostItemForm() {
+        VBox form = new VBox(10);
+        form.setPadding(new Insets(15));
+        
+        Label titleLabel = new Label("Report Lost Item");
+        titleLabel.setStyle("-fx-font-size: 18; -fx-font-weight: bold;");
+        
+        TextField nameField = new TextField();
+        nameField.setPromptText("Item name");
+        
+        TextArea descArea = new TextArea();
+        descArea.setPromptText("Detailed description");
+        descArea.setPrefRowCount(3);
+        
+        TextField locationField = new TextField();
+        locationField.setPromptText("Where did you lose it?");
+        
+        DatePicker datePicker = new DatePicker();
+        datePicker.setValue(LocalDate.now());
+        
+        TextField rewardField = new TextField();
+        rewardField.setPromptText("Reward amount (optional)");
+        
+        // Media upload section
+        Label mediaLabel = new Label("Add Photos/Videos:");
+        Button addMediaButton = new Button("Add Media");
+        ListView<String> mediaList = new ListView<>();
+        mediaList.setPrefHeight(100);
+        
+        List<File> mediaFiles = new ArrayList<>();
+        
+        addMediaButton.setOnAction(e -> {
+            FileChooser fileChooser = new FileChooser();
+            fileChooser.setTitle("Select Media Files");
+            fileChooser.getExtensionFilters().addAll(
+                new FileChooser.ExtensionFilter("Image Files", "*.png", "*.jpg", "*.jpeg"),
+                new FileChooser.ExtensionFilter("Video Files", "*.mp4", "*.mov"),
+                new FileChooser.ExtensionFilter("All Files", "*.*")
+            );
+            List<File> selectedFiles = fileChooser.showOpenMultipleDialog(primaryStage);
+            if (selectedFiles != null) {
+                mediaFiles.addAll(selectedFiles);
+                mediaList.getItems().clear();
+                mediaFiles.forEach(f -> mediaList.getItems().add(f.getName()));
+            }
+        });
+        
+        Button submitButton = new Button("Submit Report");
+        submitButton.setOnAction(e -> {
+            try {
+                double reward = rewardField.getText().isEmpty() ? 0 : Double.parseDouble(rewardField.getText());
+                LostItem item = new LostItem(
+                    0, // ID will be generated by database
+                    nameField.getText(),
+                    descArea.getText(),
+                    locationField.getText(),
+                    datePicker.getValue(),
+                    currentUser,
+                    ItemStatus.LOST,
+                    reward
+                );
+                
+                if (database.addItem(item)) {
+                    // Add media files
+                    for (File file : mediaFiles) {
+                        String extension = file.getName().substring(file.getName().lastIndexOf(".") + 1);
+                        boolean isVideo = extension.equalsIgnoreCase("mp4") || extension.equalsIgnoreCase("mov");
+                        database.addMedia(item.getId(), file.getAbsolutePath(), isVideo);
+                    }
+                    
+                    showAlert("Success", "Lost item reported successfully!");
+                    // Clear form
+                    nameField.clear();
+                    descArea.clear();
+                    locationField.clear();
+                    rewardField.clear();
+                    mediaFiles.clear();
+                    mediaList.getItems().clear();
+                } else {
+                    showAlert("Error", "Failed to report lost item");
+                }
+            } catch (NumberFormatException ex) {
+                showAlert("Invalid Input", "Please enter a valid reward amount");
+            } catch (DatabaseException ex) {
+                showAlert("Database Error", "Failed to report item: " + ex.getMessage());
+            }
+        });
+        
+        form.getChildren().addAll(
+            titleLabel,
+            new Label("Item Name:"), nameField,
+            new Label("Description:"), descArea,
+            new Label("Location Lost:"), locationField,
+            new Label("Date Lost:"), datePicker,
+            new Label("Reward:"), rewardField,
+            mediaLabel, addMediaButton, mediaList,
+            submitButton
+        );
+        
+        return form;
+    }
+    
+    private VBox createFoundItemForm() {
+        VBox form = new VBox(10);
+        form.setPadding(new Insets(15));
+        
+        Label titleLabel = new Label("Report Found Item");
+        titleLabel.setStyle("-fx-font-size: 18; -fx-font-weight: bold;");
+        
+        TextField nameField = new TextField();
+        nameField.setPromptText("Item name");
+        
+        TextArea descArea = new TextArea();
+        descArea.setPromptText("Detailed description");
+        descArea.setPrefRowCount(3);
+        
+        TextField locationField = new TextField();
+        locationField.setPromptText("Where did you find it?");
+        
+        DatePicker datePicker = new DatePicker();
+        datePicker.setValue(LocalDate.now());
+        
+        TextField storageField = new TextField();
+        storageField.setPromptText("Current storage location");
+        
+        // Media upload section
+        Label mediaLabel = new Label("Add Photos/Videos:");
+        Button addMediaButton = new Button("Add Media");
+        ListView<String> mediaList = new ListView<>();
+        mediaList.setPrefHeight(100);
+        
+        List<File> mediaFiles = new ArrayList<>();
+        
+        addMediaButton.setOnAction(e -> {
+            FileChooser fileChooser = new FileChooser();
+            fileChooser.setTitle("Select Media Files");
+            fileChooser.getExtensionFilters().addAll(
+                new FileChooser.ExtensionFilter("Image Files", "*.png", "*.jpg", "*.jpeg"),
+                new FileChooser.ExtensionFilter("Video Files", "*.mp4", "*.mov"),
+                new FileChooser.ExtensionFilter("All Files", "*.*")
+            );
+            List<File> selectedFiles = fileChooser.showOpenMultipleDialog(primaryStage);
+            if (selectedFiles != null) {
+                mediaFiles.addAll(selectedFiles);
+                mediaList.getItems().clear();
+                mediaFiles.forEach(f -> mediaList.getItems().add(f.getName()));
+            }
+        });
+        
+        Button submitButton = new Button("Submit Report");
+        submitButton.setOnAction(e -> {
+            try {
+                FoundItem item = new FoundItem(
+                    0, // ID will be generated by database
+                    nameField.getText(),
+                    descArea.getText(),
+                    locationField.getText(),
+                    datePicker.getValue(),
+                    currentUser,
+                    ItemStatus.FOUND,
+                    storageField.getText()
+                );
+                
+                if (database.addItem(item)) {
+                    // Add media files
+                    for (File file : mediaFiles) {
+                        String extension = file.getName().substring(file.getName().lastIndexOf(".") + 1);
+                        boolean isVideo = extension.equalsIgnoreCase("mp4") || extension.equalsIgnoreCase("mov");
+                        database.addMedia(item.getId(), file.getAbsolutePath(), isVideo);
+                    }
+                    
+                    showAlert("Success", "Found item reported successfully!");
+                    // Clear form
+                    nameField.clear();
+                    descArea.clear();
+                    locationField.clear();
+                    storageField.clear();
+                    mediaFiles.clear();
+                    mediaList.getItems().clear();
+                } else {
+                    showAlert("Error", "Failed to report found item");
+                }
+            } catch (DatabaseException ex) {
+                showAlert("Database Error", "Failed to report item: " + ex.getMessage());
+            }
+        });
+        
+        form.getChildren().addAll(
+            titleLabel,
+            new Label("Item Name:"), nameField,
+            new Label("Description:"), descArea,
+            new Label("Location Found:"), locationField,
+            new Label("Date Found:"), datePicker,
+            new Label("Storage Location:"), storageField,
+            mediaLabel, addMediaButton, mediaList,
+            submitButton
+        );
+        
+        return form;
+    }
+    
+    private VBox createSearchPanel() {
+        VBox panel = new VBox(10);
+        panel.setPadding(new Insets(15));
+        
+        Label titleLabel = new Label("Search Items");
+        titleLabel.setStyle("-fx-font-size: 18; -fx-font-weight: bold;");
+        
+        TextField searchField = new TextField();
+        searchField.setPromptText("Enter search terms");
+        
+        ToggleGroup typeGroup = new ToggleGroup();
+        RadioButton lostRadio = new RadioButton("Lost Items");
+        RadioButton foundRadio = new RadioButton("Found Items");
+        RadioButton allRadio = new RadioButton("All Items");
+        allRadio.setSelected(true);
+        
+        lostRadio.setToggleGroup(typeGroup);
+        foundRadio.setToggleGroup(typeGroup);
+        allRadio.setToggleGroup(typeGroup);
+        
+        HBox radioBox = new HBox(10, lostRadio, foundRadio, allRadio);
+        
+        Button searchButton = new Button("Search");
+        
+        ListView<Item> resultsList = new ListView<>();
+        resultsList.setPrefHeight(400);
+        resultsList.setCellFactory(lv -> new ListCell<Item>() {
+            @Override
+            protected void updateItem(Item item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                    setGraphic(null);
+                } else {
+                    setText(item.toString());
+                }
+            }
+        });
+        
+        // Media display area
+        HBox mediaBox = new HBox(10);
+        mediaBox.setAlignment(Pos.CENTER);
+        mediaBox.setPrefHeight(200);
+        
+        // Message button
+        Button messageButton = new Button("Message Owner");
+        messageButton.setDisable(true);
+        
+        // Call button
+        Button callButton = new Button("Call Owner");
+        callButton.setDisable(true);
+        
+        resultsList.getSelectionModel().selectedItemProperty().addListener((obs, oldVal, newVal) -> {
+            if (newVal != null) {
+                messageButton.setDisable(false);
+                callButton.setDisable(false);
+                
+                // Display media for selected item
+                try {
+                    List<String> mediaPaths = database.getMediaForItem(newVal.getId());
+                    mediaBox.getChildren().clear();
+                    
+                    for (String path : mediaPaths) {
+                        if (path.toLowerCase().endsWith(".mp4") || path.toLowerCase().endsWith(".mov")) {
+                            Media media = new Media(new File(path).toURI().toString());
+                            MediaView mediaView = new MediaView(new MediaPlayer(media));
+                            mediaView.setFitWidth(150);
+                            mediaView.setFitHeight(150);
+                            mediaBox.getChildren().add(mediaView);
+                        } else {
+                            Image image = new Image(new File(path).toURI().toString());
+                            ImageView imageView = new ImageView(image);
+                            imageView.setFitWidth(150);
+                            imageView.setFitHeight(150);
+                            mediaBox.getChildren().add(imageView);
+                        }
+                    }
+                } catch (DatabaseException e) {
+                    System.err.println("Failed to load media: " + e.getMessage());
+                }
+            } else {
+                messageButton.setDisable(true);
+                callButton.setDisable(true);
+                mediaBox.getChildren().clear();
+            }
+        });
+        
+        messageButton.setOnAction(e -> {
+            Item selected = resultsList.getSelectionModel().getSelectedItem();
+            if (selected != null) {
+                showMessageDialog(selected);
+            }
+        });
+        
+        callButton.setOnAction(e -> {
+            Item selected = resultsList.getSelectionModel().getSelectedItem();
+            if (selected != null) {
+                // In a real app, this would initiate a phone call
+                showAlert("Call", "Would call " + selected.getReporter().getPhone());
+            }
+        });
+        
+        searchButton.setOnAction(e -> {
+            try {
+                List<Item> items = database.searchItems(searchField.getText());
+                
+                // Filter by type if needed
+                if (lostRadio.isSelected()) {
+                    items.removeIf(item -> !(item instanceof LostItem));
+                } else if (foundRadio.isSelected()) {
+                    items.removeIf(item -> !(item instanceof FoundItem));
+                }
+                
+                resultsList.getItems().setAll(items);
+                
+                if (items.isEmpty()) {
+                    showAlert("No Results", "No matching items found");
+                }
+            } catch (DatabaseException ex) {
+                showAlert("Database Error", "Failed to search items: " + ex.getMessage());
+            }
+        });
+        
+        HBox buttonBox = new HBox(10, messageButton, callButton);
+        
+        panel.getChildren().addAll(
+            titleLabel,
+            new Label("Search For:"), searchField,
+            new Label("Item Type:"), radioBox,
+            searchButton,
+            new Label("Results:"), resultsList,
+            new Label("Media:"), mediaBox,
+            buttonBox
+        );
+        
+        return panel;
+    }
+    
+    private void showMessageDialog(Item item) {
+        Stage dialog = new Stage();
+        dialog.setTitle("Message about: " + item.getName());
+        
+        VBox dialogVBox = new VBox(10);
+        dialogVBox.setPadding(new Insets(15));
+        
+        ListView<String> messagesList = new ListView<>();
+        messagesList.setPrefHeight(300);
+        
+        TextArea messageArea = new TextArea();
+        messageArea.setPromptText("Type your message here");
+        messageArea.setPrefRowCount(3);
+        
+        Button sendButton = new Button("Send");
+        
+        try {
+            List<Message> messages = database.getMessagesForItem(item.getId());
+            for (Message msg : messages) {
+                messagesList.getItems().add(msg.toString());
+            }
+        } catch (DatabaseException e) {
+            showAlert("Error", "Failed to load messages: " + e.getMessage());
+        }
+        
+        sendButton.setOnAction(e -> {
+            if (!messageArea.getText().isEmpty()) {
+                try {
+                    if (database.addMessage(item.getId(), currentUser.getId(), messageArea.getText())) {
+                        // Add notification to item owner
+                        String notificationMsg = String.format("%s sent you a message about your %s item: %s",
+                            currentUser.getUsername(), item.getType().toLowerCase(), item.getName());
+                        
+                        database.addNotification(item.getReporter().getId(), item.getId(), 
+                            notificationMsg, NotificationType.MESSAGE);
+                        
+                        // Update messages list
+                        messagesList.getItems().add(String.format("[%s] %s: %s", 
+                            LocalDate.now(), currentUser.getUsername(), messageArea.getText()));
+                        messageArea.clear();
+                    }
+                } catch (DatabaseException ex) {
+                    showAlert("Error", "Failed to send message: " + ex.getMessage());
+                }
+            }
+        });
+        
+        dialogVBox.getChildren().addAll(
+            new Label("Messages about " + item.getName() + ":"),
+            messagesList,
+            messageArea,
+            sendButton
+        );
+        
+        Scene dialogScene = new Scene(dialogVBox, 400, 500);
+        dialog.setScene(dialogScene);
+        dialog.show();
+    }
+    
+    private VBox createMyItemsPanel() {
+        VBox panel = new VBox(10);
+        panel.setPadding(new Insets(15));
+        
+        Label titleLabel = new Label("My Reported Items");
+        titleLabel.setStyle("-fx-font-size: 18; -fx-font-weight: bold;");
+        
+        ListView<Item> itemsList = new ListView<>();
+        itemsList.setPrefHeight(500);
+        itemsList.setCellFactory(lv -> new ListCell<Item>() {
+            @Override
+            protected void updateItem(Item item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                    setGraphic(null);
+                } else {
+                    setText(item.toString());
+                }
+            }
+        });
+        
+        // Media display area
+        HBox mediaBox = new HBox(10);
+        mediaBox.setAlignment(Pos.CENTER);
+        mediaBox.setPrefHeight(200);
+        
+        // View messages button
+        Button messagesButton = new Button("View Messages");
+        messagesButton.setDisable(true);
+        
+        itemsList.getSelectionModel().selectedItemProperty().addListener((obs, oldVal, newVal) -> {
+            if (newVal != null) {
+                messagesButton.setDisable(false);
+                
+                // Display media for selected item
+                try {
+                    List<String> mediaPaths = database.getMediaForItem(newVal.getId());
+                    mediaBox.getChildren().clear();
+                    
+                    for (String path : mediaPaths) {
+                        if (path.toLowerCase().endsWith(".mp4") || path.toLowerCase().endsWith(".mov")) {
+                            Media media = new Media(new File(path).toURI().toString());
+                            MediaView mediaView = new MediaView(new MediaPlayer(media));
+                            mediaView.setFitWidth(150);
+                            mediaView.setFitHeight(150);
+                            mediaBox.getChildren().add(mediaView);
+                        } else {
+                            Image image = new Image(new File(path).toURI().toString());
+                            ImageView imageView = new ImageView(image);
+                            imageView.setFitWidth(150);
+                            imageView.setFitHeight(150);
+                            mediaBox.getChildren().add(imageView);
+                        }
+                    }
+                } catch (DatabaseException e) {
+                    System.err.println("Failed to load media: " + e.getMessage());
+                }
+            } else {
+                messagesButton.setDisable(true);
+                mediaBox.getChildren().clear();
+            }
+        });
+        
+        messagesButton.setOnAction(e -> {
+            Item selected = itemsList.getSelectionModel().getSelectedItem();
+            if (selected != null) {
+                showMessageDialog(selected);
+            }
+        });
+        
+        Button refreshButton = new Button("Refresh");
+        refreshButton.setOnAction(e -> {
+            try {
+                List<Item> items = database.getItemsByUser(currentUser);
+                itemsList.getItems().setAll(items);
+                
+                if (items.isEmpty()) {
+                    showAlert("No Items", "You haven't reported any items yet");
+                }
+            } catch (DatabaseException ex) {
+                showAlert("Database Error", "Failed to load your items: " + ex.getMessage());
+            }
+        });
+        
+        // Load items initially
+        refreshButton.fire();
+        
+        panel.getChildren().addAll(
+            titleLabel, 
+            refreshButton, 
+            itemsList,
+            new Label("Media:"), 
+            mediaBox,
+            messagesButton
+        );
+        
+        return panel;
+    }
+    
+    private VBox createMessagesPanel() {
+        VBox panel = new VBox(10);
+        panel.setPadding(new Insets(15));
+        
+        Label titleLabel = new Label("My Messages");
+        titleLabel.setStyle("-fx-font-size: 18; -fx-font-weight: bold;");
+        
+        ListView<String> messagesList = new ListView<>();
+        messagesList.setPrefHeight(500);
+        
+        Button refreshButton = new Button("Refresh");
+        refreshButton.setOnAction(e -> {
+            try {
+                List<Item> items = database.getItemsByUser(currentUser);
+                messagesList.getItems().clear();
+                
+                for (Item item : items) {
+                    List<Message> messages = database.getMessagesForItem(item.getId());
+                    for (Message msg : messages) {
+                        if (msg.getSender().getId() != currentUser.getId()) {
+                            messagesList.getItems().add(String.format("About %s: %s", 
+                                item.getName(), msg.toString()));
+                        }
+                    }
+                }
+                
+                if (messagesList.getItems().isEmpty()) {
+                    messagesList.getItems().add("You have no messages");
+                }
+            } catch (DatabaseException ex) {
+                showAlert("Database Error", "Failed to load messages: " + ex.getMessage());
+            }
+        });
+        
+        // Load messages initially
+        refreshButton.fire();
+        
+        panel.getChildren().addAll(titleLabel, refreshButton, messagesList);
+        return panel;
+    }
+    
+    private VBox createNotificationsPanel() {
+        VBox panel = new VBox(10);
+        panel.setPadding(new Insets(15));
+        
+        Label titleLabel = new Label("Notifications");
+        titleLabel.setStyle("-fx-font-size: 18; -fx-font-weight: bold;");
+        
+        ListView<Notification> notificationsList = new ListView<>();
+        notificationsList.setPrefHeight(500);
+        notificationsList.setCellFactory(lv -> new ListCell<Notification>() {
+            @Override
+            protected void updateItem(Notification notification, boolean empty) {
+                super.updateItem(notification, empty);
+                if (empty || notification == null) {
+                    setText(null);
+                    setGraphic(null);
+                } else {
+                    setText(notification.toString());
+                    if (!notification.isRead()) {
+                        setStyle("-fx-font-weight: bold; -fx-background-color: #e6f3ff;");
+                    } else {
+                        setStyle("");
+                    }
+                }
+            }
+        });
+        
+        Button refreshButton = new Button("Refresh");
+        Button markAsReadButton = new Button("Mark as Read");
+        
+        refreshButton.setOnAction(e -> {
+            try {
+                List<Notification> notifications = database.getNotificationsForUser(currentUser.getId());
+                notificationsList.getItems().setAll(notifications);
+                
+                if (notifications.isEmpty()) {
+                    notificationsList.getItems().add("You have no notifications");
+                }
+            } catch (DatabaseException ex) {
+                showAlert("Database Error", "Failed to load notifications: " + ex.getMessage());
+            }
+        });
+        
+        markAsReadButton.setOnAction(e -> {
+            Notification selected = notificationsList.getSelectionModel().getSelectedItem();
+            if (selected != null && !selected.isRead()) {
+                try {
+                    if (database.markNotificationAsRead(selected.getId())) {
+                        refreshButton.fire(); // Refresh the list
+                    }
+                } catch (DatabaseException ex) {
+                    showAlert("Database Error", "Failed to mark notification as read: " + ex.getMessage());
+                }
+            }
+        });
+        
+        // Load notifications initially
+        refreshButton.fire();
+        
+        HBox buttonBox = new HBox(10, refreshButton, markAsReadButton);
+        
+        panel.getChildren().addAll(titleLabel, buttonBox, notificationsList);
+        return panel;
+    }
+    
+    private void showAlert(String title, String message) {
+        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        alert.setTitle(title);
+        alert.setHeaderText(null);
+        alert.setContentText(message);
+        alert.showAndWait();
+    }
+    
+    @Override
+    public void stop() {
+        stopNotificationChecker();
+        if (database != null) {
+            database.disconnect();
+        }
+    }
+}
